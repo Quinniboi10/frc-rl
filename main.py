@@ -10,29 +10,67 @@ from eagle.callback import *
 import config
 
 def main():
-    train_loader = DataLoader(
-        FRCDataset(config.TRAIN_DATA),
-        batch_size=config.BATCH_SIZE,
-        shuffle=True,
-        num_workers=2
-    )
-    valid_loader = DataLoader(
-        FRCDataset(config.VALID_DATA),
-        batch_size=config.BATCH_SIZE,
-        shuffle=False,
-        num_workers=1
-    )
+    class Pretrain:
+        """
+            Bootstrap (drive straight toward attacker) data
+            Attacker is learned
+            No extra objects
+            Random field positions
+        """
+        train_loader = DataLoader(
+            FRCDataset("/mnt/frc-rl/Data/pretrain/train"),
+            batch_size=config.BATCH_SIZE,
+            shuffle=True,
+            num_workers=2
+        )
+        valid_loader = DataLoader(
+            FRCDataset("/mnt/frc-rl/Data/pretrain/valid"),
+            batch_size=config.BATCH_SIZE,
+            shuffle=False,
+            num_workers=1
+        )
+
+    class Finetune:
+        """
+            Bootstrap (drive straight toward attacker) data
+            Attacker is learned
+            No extra objects
+            Random field positions
+        """
+        train_loader = DataLoader(
+            FRCDataset("/mnt/frc-rl/Data/train"),
+            batch_size=config.BATCH_SIZE,
+            shuffle=True,
+            num_workers=2
+        )
+        valid_loader = DataLoader(
+            FRCDataset("/mnt/frc-rl/Data/train"),
+            batch_size=config.BATCH_SIZE,
+            shuffle=False,
+            num_workers=1
+        )
 
     model = Model()
     optim = torch.optim.AdamW(model.parameters())
-    learner = Learner(model, optim, train_loader, valid_loader, loss_fn=FRCLoss(), clip_grads=1,
+
+    ############ PRETRAIN ############
+    learner = Learner(model, optim, Pretrain.train_loader, Pretrain.valid_loader, loss_fn=FRCLoss(), clip_grads=1, autocast=False,
                     metrics = [LRMetric(), TrainLossMetric(), ValidLossMetric(), CorrectHitMetric(), VelocityPredictionMetric()],
                     cbs     = [SaveBestCallback("./exports/autosave"), StatusCallback()]
     )
 
     learner.fit_one_cycle(config.EPOCHS, max_lr=3e-4)
+    learner.save("./exports/pretrain")
 
-    learner.save("./exports/model")
+    ############ FINE TUNE ############
+    learner = Learner(model, optim, Pretrain.train_loader, Pretrain.valid_loader, loss_fn=FRCLoss(), clip_grads=1, autocast=False,
+                    metrics = [LRMetric(), TrainLossMetric(), ValidLossMetric(), CorrectHitMetric(), VelocityPredictionMetric()],
+                    cbs     = [SaveBestCallback("./exports/autosave"), StatusCallback()]
+    )
+
+    learner.fit_one_cycle(config.EPOCHS, max_lr=1e-4)
+    learner.save("./exports/finetune")
+
 
 if __name__ == "__main__":
     main()

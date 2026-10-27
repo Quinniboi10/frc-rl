@@ -47,13 +47,17 @@ class Episode:
     # Returns config.STACKING datapoints in a list
     def __getitem__(self, idx: int) -> list[Datapoint]:
         assert(0 <= idx < len(self.frames))
-        start = max(0, idx - config.STACKING)
-        padding = max(0, config.STACKING - idx)
+        start = max(0, idx - config.FRAMES)
+        padding = max(0, config.FRAMES - idx)
         return [self.frames[0]] * padding + self.frames[start:idx]
 
 
 class FRCDataset(Dataset):
-    def __init__(self, root: Path):
+    def __init__(self, root: Path|str):
+        if not isinstance(root, Path):
+            root = Path(root)
+        root = root.resolve(strict=True)
+
         files: list[Path] = [file for file in root.rglob("*.txt") if file.is_file()]
 
         self.datapoints: list[Datapoint] = []
@@ -123,7 +127,7 @@ class FRCDataset(Dataset):
         episode_idx = self.idx_to_ep[idx]
         frames = self.episodes[episode_idx][self.idx_to_step[idx]]
 
-        assert len(frames) == config.STACKING, f"{idx} has a length of {len(frames)}"
+        assert len(frames) == config.FRAMES, f"{idx} has a length of {len(frames)}"
 
         return torch.concat([frame.get_input_tensor() for frame in frames]), frames[-1].get_target_tensor()
 
