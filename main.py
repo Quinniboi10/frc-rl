@@ -18,18 +18,19 @@ def main():
             Random field positions
         """
         train_loader = DataLoader(
-            FRCDataset("/mnt/frc-rl/Data/pretrain/train"),
+            FRCDataset("/mnt/frc-rl/Data/train"),
             batch_size=config.BATCH_SIZE,
             shuffle=True,
             num_workers=2
         )
         valid_loader = DataLoader(
-            FRCDataset("/mnt/frc-rl/Data/pretrain/valid"),
+            FRCDataset("/mnt/frc-rl/Data/valid"),
             batch_size=config.BATCH_SIZE,
             shuffle=False,
             num_workers=1
         )
 
+    # For now, we'll use the same data just on lower LR
     class Finetune:
         """
             Bootstrap (drive straight toward attacker) data
@@ -44,7 +45,7 @@ def main():
             num_workers=2
         )
         valid_loader = DataLoader(
-            FRCDataset("/mnt/frc-rl/Data/train"),
+            FRCDataset("/mnt/frc-rl/Data/valid"),
             batch_size=config.BATCH_SIZE,
             shuffle=False,
             num_workers=1
@@ -63,7 +64,7 @@ def main():
     learner.save("./exports/pretrain")
 
     ############ FINE TUNE ############
-    learner = Learner(model, optim, Pretrain.train_loader, Pretrain.valid_loader, loss_fn=FRCLoss(), clip_grads=1, autocast=False,
+    learner = Learner(model, optim, Finetune.train_loader, Finetune.valid_loader, loss_fn=FRCLoss(), clip_grads=1, autocast=False,
                     metrics = [LRMetric(), TrainLossMetric(), ValidLossMetric(), CorrectHitMetric(), VelocityPredictionMetric()],
                     cbs     = [SaveBestCallback("./exports/autosave"), StatusCallback()]
     )
