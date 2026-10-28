@@ -114,12 +114,31 @@ class Solver:
         self.goal_pos = cp.Parameter(2)
         self.goal_vel = cp.Parameter(2)
         self.goal_angle = cp.Parameter()
+        self.previous_acc = cp.Parameter(2, value=np.zeros(2))
 
         ############ CONSTRAINTS AND COST ############
 
-        # Disabled since we force this in the constraints
-        # self.cost = cp.sum_squares(self.pos[:, -1] - self.goal_pos) + 0.5 * cp.sum_squares(self.vel[:, -1] - self.goal_vel) + 0.5 * cp.abs(self.angle[-1] - self.goal_angle)
-        self.cost = 0
+        # Squaring the scale 8 gives a lateral weight of 64
+        axis_scale = np.array([1.0, 8.0])
+        self.cost = 30.0 * cp.sum_squares(cp.multiply(axis_scale, self.pos[:, -1] - self.goal_pos))
+        self.cost += 2.0 * cp.sum_squares(cp.multiply(axis_scale, self.vel[:, -1] - self.goal_vel))
+        self.cost += 0.025 * cp.sum_squares(self.acc)
+        self.cost += 0.015 * cp.sum_squares(self.acc[:, 0] - self.previous_acc)
+        if horizon > 1:
+            self.cost += 0.015 * cp.sum_squares(self.acc[:, 1:] - self.acc[:, :-1])
+
+        # Field limits for the placeholder
+        xmin, xmax, ymin, ymax = -13.4, -0.4, -7.5, -0.5
+        self.cost += 12.0 * (
+            cp.sum_squares(cp.pos(xmin - self.pos[0, :])) +
+            cp.sum_squares(cp.pos(self.pos[0, :] - xmax)) +
+            cp.sum_squares(cp.pos(ymin - self.pos[1, :])) +
+            cp.sum_squares(cp.pos(self.pos[1, :] - ymax))
+        )
+
+        # Preserve your separate angular objective and effort penalty
+        self.cost += 0.5 * cp.abs(self.angle[-1] - self.goal_angle)
+        self.cost += 0.01 * cp.sum_squares(self.alpha)
 
         # The first frame must contain the current robot state
         self.constraints = [
@@ -139,24 +158,13 @@ class Solver:
                 self.omega[i+1] == self.omega[i] + self.alpha[i]*dt,
 
 
-                cp.norm(self.vel[:, i]) <= robot_constraints.MAX_SPEED,
+                cp.norm(self.vel[:, i+1]) <= robot_constraints.MAX_SPEED,
                 cp.norm(self.acc[:, i]) <= robot_constraints.MAX_ACCEL,
 
-                cp.abs(self.omega[i]) <= robot_constraints.MAX_ANGULAR_SPEED,
+                cp.abs(self.omega[i+1]) <= robot_constraints.MAX_ANGULAR_SPEED,
                 cp.abs(self.alpha[i]) <= robot_constraints.MAX_ANGULAR_ACCEL
             ]
 
-            # Tiny penalty for big accelerations (should to avoid wheel tread wear)
-            self.cost += 0.01 * cp.sum_squares(self.acc[:, i])
-            self.cost += 0.01 * cp.square(self.alpha[i])
-
-        # The last frame must be at the goal
-        self.constraints += [
-            self.pos[:, -1] == self.goal_pos,
-            self.vel[:, -1] == self.goal_vel,
-            self.angle[-1] == self.goal_angle,
-            cp.abs(self.omega[-1]) <= config.INTERCEPT_MAX_OMEGA
-        ]
 
         ############ PROBLEM ############
 
@@ -192,33 +200,19 @@ class Solver:
             ax, ay = acc.value
             assert ax is not None and ay is not None
             assert self.alpha[0].value is not None
+            self.previous_acc.value = np.array([ax, ay], dtype=float)
             return Vec2(ax, ay), self.alpha[0].value.item()
 
         return None
-
-class SolverBatch():
-    def __init__(self, ticks_to_intercept: list[int], robot_constraints: RobotConstraints):
-        self.solvers = {
-            time_to_intercept: Solver(time_to_intercept, robot_constraints) for time_to_intercept in ticks_to_intercept
-        }
-
-    def __call__(self, seconds_to_intercept: float, *args) -> Optional[tuple[Vec2, float]]:
-        result = self.solvers[round(seconds_to_intercept / (config.TIMESTEP / 1000))](*args)
-        return result
 
 class Controller:
     def __init__(self, model_path: Path, constraints: RobotConstraints=RobotConstraints()):
         self.defense_inference_stack = DefenseInferenceStack(model_path)
         self.objective = ControllerObjective.STOP_POSITIVE_X
-        self.solver_steps = list(sorted(set(
-            round(t / (config.TIMESTEP / 1000))
-            for t in np.linspace(
-                config.MIN_SEARCH_LOOKAHEAD,
-                config.MAX_SEARCH_LOOKAHEAD,
-                config.NUM_SEARCH_INTERVALS,
-            )
-        ))) # Ticks to intercept
-        self.solver = SolverBatch(self.solver_steps, constraints)
+        horizon = round(config.SEARCH_LOOKAHEAD * 1000 / config.TIMESTEP)
+        logging.info(f"Using {horizon} frame solver search length")
+        self.solver = Solver(horizon, constraints)
+        self.initial_pos = None
 
     @property
     def frames(self):
@@ -231,6 +225,11 @@ class Controller:
     def set_objective(self, new_objective: ControllerObjective):
         self.objective = new_objective
 
+    def reset(self, self_x: float, self_y: float):
+        self.defense_inference_stack.reset()
+        self.solver.previous_acc.value = np.zeros(2)
+        self.initial_pos = Vec2(self_x, self_y)
+
     @catcherrors
     def update(self, frame: Frame) -> ControllerAction:
         self.defense_inference_stack.add_frame(frame)
@@ -240,16 +239,27 @@ class Controller:
         self_angle = math.atan2(self.last_frame.rot_sin, self.last_frame.rot_cos)
         self_omega = frame.vel_angular
 
+        assert self.initial_pos is not None, "Didn't call reset() before update() in Controller"
+
         ############ None (search) ############
-        search_action = ControllerAction(None, self._get_search_rot() - self_angle) # Will naturally oscillate pretty bad since we're going from error in radians to acceleration but it's a "scanning feature" of course TODO: make it better lol
-
-        if not any(p > config.CONF_THRESHOLD for p in preds.ray_hit_confidences):
-            return search_action
-
-        ############   Intercept   ############
         self_pos = Vec2(self.last_frame.pos_x, self.last_frame.pos_z)
         self_vel = self._to_field_coords(self.last_frame.vel_fwd, self.last_frame.vel_right, self_angle)
 
+        def build_search_action() -> ControllerAction:
+            assert self.initial_pos is not None # It can't be by here, but pyright doesn't know that
+            solution = self.solver(
+                self_pos, self_vel, self_angle, self_omega,
+                self.initial_pos, Vec2.zero(), self._get_search_rot()
+            )
+            if solution is not None:
+                accel, rot_accel = solution
+                return ControllerAction(accel.astuple(), rot_accel)
+            return ControllerAction(None, self._get_search_rot() - self_angle) # Will naturally oscillate pretty bad since we're going from error in radians to acceleration
+
+        if not any(p > config.CONF_THRESHOLD for p in preds.ray_hit_confidences):
+            return build_search_action()
+
+        ############   Intercept   ############
         # Solve target position by calculating center in field/robot-relative polar (hybrid) and converting back to euclidean
         opp_theta, opp_r = self._get_opponent_position_polar(self_angle, preds)
         opp_pos = Vec2(opp_r * math.cos(opp_theta), -opp_r * math.sin(opp_theta)) + self_pos
@@ -264,32 +274,26 @@ class Controller:
             return ControllerAction((-self._get_blocked_opp_vel()).astuple(), 0)
 
         # Otherwise, solve for intercept
-        dt = config.TIMESTEP / 1000
-        for expected_time_of_intercept in [step * dt for step in self.solver_steps]:
-            target_pos = opp_pos + opp_vel * expected_time_of_intercept
-            intercept_pos = target_pos + self._get_intercept_offset()
+        expected_time_of_intercept = config.SEARCH_LOOKAHEAD / 2
+        target_pos = opp_pos + opp_vel * expected_time_of_intercept
 
-            solution = self.solver(
-                expected_time_of_intercept,
-                self_pos, self_vel, self_angle, self_omega,
-                intercept_pos, Vec2.zero(), self._get_intercept_rot()
-            )
+        # Note that here we only try to match Y values (get in the way)
+        solution = self.solver(
+            self_pos, self_vel, self_angle, self_omega,
+            Vec2(self.initial_pos.x, target_pos.y), Vec2.zero(), self._get_intercept_rot()
+        )
 
-            # If the solution exists, return
-            if solution is not None:
-                accel, rot_accel = solution
-                return ControllerAction(accel.astuple(), rot_accel)
+        # If the solution exists, return
+        if solution is not None:
+            accel, rot_accel = solution
+            return ControllerAction(accel.astuple(), rot_accel)
 
         # If we get here, the solver failed to find a valid solution, so we just fall back to searching in hopes of finding a new target
-        return search_action
+        return build_search_action()
 
     def _get_blocked_opp_vel(self) -> Vec2:
         """ Returns a vector in the direction which the opponent is expected to travel """
         return Vec2.forward() * (-1 if self.objective == ControllerObjective.STOP_NEGATIVE_X else 1)
-
-    def _get_intercept_offset(self) -> Vec2:
-        """ Return the offset (as a vector) representing where we WANT to be relative to the target based on the objective """
-        return self._get_blocked_opp_vel() * config.INTERCEPT_OFFSET
 
     def _get_intercept_rot(self) -> float:
         """ Return the target intercept rotation for the given objective in rads """

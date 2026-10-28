@@ -15,11 +15,8 @@ EPOCHS = 15
 # CONTROLLER
 TIMESTEP = 100 # ms
 
-MIN_SEARCH_LOOKAHEAD = 0.1 # sec
-MAX_SEARCH_LOOKAHEAD = 5.0 # sec
-INTERCEPT_OFFSET = 1.0 # meters between the opponent and the goal to try to reach
+SEARCH_LOOKAHEAD = 0.3 # seconds, must be multiple of timestep
 NUM_SEARCH_INTERVALS = 10
-INTERCEPT_MAX_OMEGA = 0.1 # rad/s
 
 class BLOCKING:
     MAX_Y_ERROR = 0.3 # m
