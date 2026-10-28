@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from typing import Optional, Callable, ParamSpec, TypeVar
 from functools import wraps
 from enum import Enum, auto
+from collections import deque
+
 import logging
 import math
 
@@ -120,10 +122,10 @@ class Solver:
 
         # Squaring the scale 8 gives a lateral weight of 64
         axis_scale = np.array([1.0, 8.0])
-        self.cost = 30.0 * cp.sum_squares(cp.multiply(axis_scale, self.pos[:, -1] - self.goal_pos))
+        self.cost = 80.0 * cp.sum_squares(cp.multiply(axis_scale, self.pos[:, -1] - self.goal_pos))
         self.cost += 2.0 * cp.sum_squares(cp.multiply(axis_scale, self.vel[:, -1] - self.goal_vel))
-        self.cost += 0.025 * cp.sum_squares(self.acc)
-        self.cost += 0.015 * cp.sum_squares(self.acc[:, 0] - self.previous_acc)
+        self.cost += 0.00025 * cp.sum_squares(self.acc)
+        self.cost += 0.00015 * cp.sum_squares(self.acc[:, 0] - self.previous_acc)
         if horizon > 1:
             self.cost += 0.015 * cp.sum_squares(self.acc[:, 1:] - self.acc[:, :-1])
 
@@ -137,8 +139,9 @@ class Solver:
         )
 
         # Preserve your separate angular objective and effort penalty
-        self.cost += 0.5 * cp.abs(self.angle[-1] - self.goal_angle)
-        self.cost += 0.01 * cp.sum_squares(self.alpha)
+        self.cost += 35.0 * cp.abs(self.angle[-1] - self.goal_angle)
+        self.cost += 5.0 * cp.abs(self.omega[-1]) # Just always try to have 0 rotational velocity at the end of a frame
+        self.cost += cp.sum_squares(self.alpha / (2 * math.pi))
 
         # The first frame must contain the current robot state
         self.constraints = [
@@ -207,12 +210,14 @@ class Solver:
 
 class Controller:
     def __init__(self, model_path: Path, constraints: RobotConstraints=RobotConstraints()):
+        self.constraints = constraints
         self.defense_inference_stack = DefenseInferenceStack(model_path)
         self.objective = ControllerObjective.STOP_POSITIVE_X
         horizon = round(config.SEARCH_LOOKAHEAD * 1000 / config.TIMESTEP)
         logging.info(f"Using {horizon} frame solver search length")
         self.solver = Solver(horizon, constraints)
         self.initial_pos = None
+        self.opp_pos_history: deque[None|Vec2] = deque([None] * 10, maxlen=10)
 
     @property
     def frames(self):
@@ -229,6 +234,8 @@ class Controller:
         self.defense_inference_stack.reset()
         self.solver.previous_acc.value = np.zeros(2)
         self.initial_pos = Vec2(self_x, self_y)
+        for _ in range(10):
+            self.opp_pos_history.append(None)
 
     @catcherrors
     def update(self, frame: Frame) -> ControllerAction:
@@ -254,9 +261,10 @@ class Controller:
             if solution is not None:
                 accel, rot_accel = solution
                 return ControllerAction(accel.astuple(), rot_accel)
-            return ControllerAction(None, self._get_search_rot() - self_angle) # Will naturally oscillate pretty bad since we're going from error in radians to acceleration
+            return ControllerAction(None, self._get_search_rot() - self_angle) # Will naturally oscillate pretty bad since we're going from error in radians to acceleration but it should be rare
 
         if not any(p > config.CONF_THRESHOLD for p in preds.ray_hit_confidences):
+            self.opp_pos_history.append(None) # No opponent means we cannot predict position
             return build_search_action()
 
         ############   Intercept   ############
@@ -264,14 +272,18 @@ class Controller:
         opp_theta, opp_r = self._get_opponent_position_polar(self_angle, preds)
         opp_pos = Vec2(opp_r * math.cos(opp_theta), -opp_r * math.sin(opp_theta)) + self_pos
 
-        opp_relative_vel = Vec2(preds.relative_velocity_forward, preds.relative_velocity_right)
-        opp_vel = self._to_field_coords(Vec2.forward().dot(opp_relative_vel), Vec2.right().dot(opp_relative_vel), self_angle)  # This is now in the same absolute coordinate system as a frame x/y
+        self.opp_pos_history.append(opp_pos)
+
+        opp_vel = self._estimate_opp_vel(self_angle, preds)
+
+        self_to_opp = opp_pos - self_pos
+        angle_toward_opp = math.atan2(self_to_opp.y, self_to_opp.x)
 
         # First check if we should block
         if abs(self_pos.y - opp_pos.y) < config.BLOCKING.MAX_Y_ERROR and \
             abs(self_pos.x - opp_pos.x) < config.BLOCKING.MAX_X_DISTANCE and \
             self._get_blocked_opp_vel().dot(self_pos - opp_pos) > 0:
-            return ControllerAction((-self._get_blocked_opp_vel()).astuple(), 0)
+            return ControllerAction((-self._get_blocked_opp_vel() * self.constraints.MAX_ACCEL).astuple(), 10 * (self._get_intercept_rot() - self_angle))
 
         # Otherwise, solve for intercept
         expected_time_of_intercept = config.SEARCH_LOOKAHEAD / 2
@@ -280,7 +292,7 @@ class Controller:
         # Note that here we only try to match Y values (get in the way)
         solution = self.solver(
             self_pos, self_vel, self_angle, self_omega,
-            Vec2(self.initial_pos.x, target_pos.y), Vec2.zero(), self._get_intercept_rot()
+            Vec2(self.initial_pos.x, target_pos.y), Vec2.zero(), (angle_toward_opp + self._get_intercept_rot()) / 2
         )
 
         # If the solution exists, return
@@ -290,6 +302,18 @@ class Controller:
 
         # If we get here, the solver failed to find a valid solution, so we just fall back to searching in hopes of finding a new target
         return build_search_action()
+
+    def _estimate_opp_vel(self, self_angle: float, preds: DefenseModelOutput) -> Vec2:
+        opp_relative_vel = Vec2(preds.relative_velocity_forward, preds.relative_velocity_right)
+        model_est = self._to_field_coords(Vec2.forward().dot(opp_relative_vel), Vec2.right().dot(opp_relative_vel), self_angle)  # This is now in the same absolute coordinate system as a frame x/y
+
+        if self.opp_pos_history[-1] is None or self.opp_pos_history[-2] is None:
+            return model_est
+
+        curr_pos = self.opp_pos_history[-1]
+        last_pos = self.opp_pos_history[-2]
+
+        return (curr_pos - last_pos) / (config.TIMESTEP / 1000)
 
     def _get_blocked_opp_vel(self) -> Vec2:
         """ Returns a vector in the direction which the opponent is expected to travel """
@@ -320,13 +344,13 @@ class Controller:
         c1, c2 = center_of_largest_hit, center_of_largest_hit + (1 if largest_hit_size % 2 == 0 else 0) # c1 and c2 are the 2 closest raycasts to the center so we avg them
         
         angle = (self._fov_for(c1) + self._fov_for(c2)) / 2 + self_angle
-        distance = (self.last_frame.raycast_distances[c1] + self.last_frame.raycast_distances[c2]) / 2
+        distance = (self.last_frame.raycast_distances[c1] + self.last_frame.raycast_distances[c2]) / 2 + config.EST_BUPER_TO_CENTER
 
         return angle, distance
 
     @staticmethod
     def _to_field_coords(forward: float, right: float, yaw: float):
         return Vec2(
-            math.cos(yaw) * forward - math.sin(yaw) * right,
-            -math.sin(yaw) * forward - math.cos(yaw) * right,
+            math.cos(yaw) * forward + math.sin(yaw) * right,
+            math.sin(yaw) * forward - math.cos(yaw) * right,
         )
