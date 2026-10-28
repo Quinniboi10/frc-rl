@@ -24,4 +24,6 @@ class BLOCKING:
     MAX_Y_ERROR = 0.3 # m, horizontal error
     MAX_X_DISTANCE = 1 # m, sensor-to-opp-center
 
+MAX_DROPOUT_TICKS = 2 # maximum number of ticks to continue blocking/intercepting on old paths before returning to search
+
 CONF_THRESHOLD = 0.5

@@ -61,11 +61,20 @@ class Vec2:
     def dot(self, other: Vec2):
         return math.sumprod(self, other)
 
+class ControllerState(Enum):
+    SEARCHING = auto()
+    BLOCKING = auto()
+    INTERCEPTING = auto()
 
 @dataclass
 class ControllerAction:
+    state: ControllerState
     accel: Optional[tuple[float, float]] # Field-relative (x, y) OR None to represent "stay stationary"
     rot_accel: float # Radians
+
+    @staticmethod
+    def idle() -> ControllerAction:
+        return ControllerAction(ControllerState.SEARCHING, None, 0)
 
 class ControllerObjective(Enum):
     STOP_POSITIVE_X = auto()
@@ -219,6 +228,19 @@ class Controller:
         self.initial_pos = None
         self.opp_pos_history: deque[None|Vec2] = deque([None] * 10, maxlen=10)
 
+        self.last_act = ControllerAction.idle()
+        self.repeated_ticks = 0
+
+    def reset(self, self_x: float, self_y: float):
+        self.defense_inference_stack.reset()
+        self.solver.previous_acc.value = np.zeros(2)
+        self.initial_pos = Vec2(self_x, self_y)
+        for _ in range(10):
+            self.opp_pos_history.append(None)
+
+        self.last_act = ControllerAction.idle()
+        self.repeated_ticks = 0
+
     @property
     def frames(self):
         return self.defense_inference_stack.frames
@@ -230,15 +252,22 @@ class Controller:
     def set_objective(self, new_objective: ControllerObjective):
         self.objective = new_objective
 
-    def reset(self, self_x: float, self_y: float):
-        self.defense_inference_stack.reset()
-        self.solver.previous_acc.value = np.zeros(2)
-        self.initial_pos = Vec2(self_x, self_y)
-        for _ in range(10):
-            self.opp_pos_history.append(None)
-
     @catcherrors
     def update(self, frame: Frame) -> ControllerAction:
+        new_action = self._update_single_frame(frame)
+
+        # If we were just doing something and randomly drop a frame which makes us search, we'll just execute the action again. Otherwise, it'll update next tick
+        if new_action.state == ControllerState.SEARCHING and self.last_act.state != ControllerState.SEARCHING and self.repeated_ticks < config.MAX_DROPOUT_TICKS:
+            self.repeated_ticks += 1
+            return self.last_act
+
+        self.last_act = new_action
+        self.repeated_ticks = 0
+
+        return new_action
+
+    def _update_single_frame(self, frame: Frame) -> ControllerAction:
+        """ Applies a single frame of updates, which doesn't handle random dropouts """
         self.defense_inference_stack.add_frame(frame)
         preds = self.defense_inference_stack.predict()
 
@@ -248,7 +277,7 @@ class Controller:
 
         assert self.initial_pos is not None, "Didn't call reset() before update() in Controller"
 
-        ############ None (search) ############
+        ############  None (search)  ############
         self_pos = Vec2(self.last_frame.pos_x, self.last_frame.pos_z)
         self_vel = self._to_field_coords(self.last_frame.vel_fwd, self.last_frame.vel_right, self_angle)
 
@@ -260,14 +289,14 @@ class Controller:
             )
             if solution is not None:
                 accel, rot_accel = solution
-                return ControllerAction(accel.astuple(), rot_accel)
-            return ControllerAction(None, self._get_search_rot() - self_angle) # Will naturally oscillate pretty bad since we're going from error in radians to acceleration but it should be rare
+                return ControllerAction(ControllerState.SEARCHING, accel.astuple(), rot_accel)
+            return ControllerAction(ControllerState.SEARCHING, None, self._get_search_rot() - self_angle) # Will naturally oscillate pretty bad since we're going from error in radians to acceleration but it should be rare
 
         if not any(p > config.CONF_THRESHOLD for p in preds.ray_hit_confidences):
             self.opp_pos_history.append(None) # No opponent means we cannot predict position
             return build_search_action()
 
-        ############   Intercept   ############
+        ############ Intercept/block ############
         # Solve target position by calculating center in field/robot-relative polar (hybrid) and converting back to euclidean
         opp_theta, opp_r = self._get_opponent_position_polar(self_angle, preds)
         opp_pos = Vec2(opp_r * math.cos(opp_theta), -opp_r * math.sin(opp_theta)) + self_pos
@@ -279,11 +308,25 @@ class Controller:
         self_to_opp = opp_pos - self_pos
         angle_toward_opp = math.atan2(self_to_opp.y, self_to_opp.x)
 
+        was_just_blocking_mult = 2 if self.last_act.state == ControllerState.BLOCKING else 1
+
         # First check if we should block
-        if abs(self_pos.y - opp_pos.y) < config.BLOCKING.MAX_Y_ERROR and \
+        # Note that we give larger X/Y error bounds if we were just blocking (to handle noise better)
+        if abs(self_pos.y - opp_pos.y) < config.BLOCKING.MAX_Y_ERROR * was_just_blocking_mult  and \
             abs(self_pos.x - opp_pos.x) < config.BLOCKING.MAX_X_DISTANCE and \
             self._get_blocked_opp_vel().dot(self_pos - opp_pos) > 0:
-            return ControllerAction((-self._get_blocked_opp_vel() * self.constraints.MAX_ACCEL).astuple(), 10 * (self._get_intercept_rot() - self_angle))
+                # If we should block, we'll assume swerve is rotated inline with the Y axis at rest so we shouldn't send X commands.
+                # Given this, we'll pass the same target X as our current X
+                solution = self.solver(
+                    self_pos, self_vel, self_angle, self_omega,
+                    Vec2(self_pos.x, opp_pos.y), Vec2.zero(), angle_toward_opp
+                )
+                # If the solution exists, return
+                if solution is not None:
+                    accel, rot_accel = solution
+                    return ControllerAction(ControllerState.BLOCKING, (0, accel.y), rot_accel) # It's technically possible that accel.x is nonzero if the opponent is pushing us, but we'll 0 it anyway because spinning the wheels risks field damage
+                else:
+                    return ControllerAction(ControllerState.BLOCKING, (0, 1e-10), 0) # Just a tiny hint of y movement to try to get swerve to align if the outer controller doesn't do so automatically
 
         # Otherwise, solve for intercept
         expected_time_of_intercept = config.SEARCH_LOOKAHEAD / 2
@@ -298,7 +341,7 @@ class Controller:
         # If the solution exists, return
         if solution is not None:
             accel, rot_accel = solution
-            return ControllerAction(accel.astuple(), rot_accel)
+            return ControllerAction(ControllerState.INTERCEPTING, accel.astuple(), rot_accel)
 
         # If we get here, the solver failed to find a valid solution, so we just fall back to searching in hopes of finding a new target
         return build_search_action()
