@@ -148,7 +148,7 @@ class Solver:
         )
 
         # Preserve your separate angular objective and effort penalty
-        self.cost += 35.0 * cp.abs(self.angle[-1] - self.goal_angle)
+        self.cost += 65.0 * cp.abs(self.angle[-1] - self.goal_angle) # We care a LOT about angle (especially when blocking so they can't pivot around us)
         self.cost += 5.0 * cp.abs(self.omega[-1]) # Just always try to have 0 rotational velocity at the end of a frame
         self.cost += cp.sum_squares(self.alpha / (2 * math.pi))
 
@@ -319,7 +319,7 @@ class Controller:
                 # Given this, we'll pass the same target X as our current X
                 solution = self.solver(
                     self_pos, self_vel, self_angle, self_omega,
-                    Vec2(self_pos.x, opp_pos.y), Vec2.zero(), angle_toward_opp
+                    Vec2(self_pos.x, opp_pos.y), Vec2.zero(), self._get_intercept_rot()
                 )
                 # If the solution exists, return
                 if solution is not None:
