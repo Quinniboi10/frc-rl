@@ -150,7 +150,7 @@ class Solver:
         # Preserve your separate angular objective and effort penalty
         self.cost += 65.0 * cp.abs(self.angle[-1] - self.goal_angle) # We care a LOT about angle (especially when blocking so they can't pivot around us)
         self.cost += 5.0 * cp.abs(self.omega[-1]) # Just always try to have 0 rotational velocity at the end of a frame
-        self.cost += cp.sum_squares(self.alpha / (2 * math.pi))
+        self.cost += (0.008 / (1.0 / (2 * math.pi) ** 2)) * cp.sum_squares(self.alpha / (2 * math.pi))
 
         # The first frame must contain the current robot state
         self.constraints = [

@@ -18,7 +18,7 @@ TIMESTEP = 100 # ms
 SEARCH_LOOKAHEAD = 0.3 # seconds, must be multiple of timestep
 NUM_SEARCH_INTERVALS = 10
 
-EST_BUPER_TO_CENTER = 0.4 # meters
+EST_BUPER_TO_CENTER = 0.5 # meters
 
 class BLOCKING:
     MAX_Y_ERROR = 0.3 # m, horizontal error
