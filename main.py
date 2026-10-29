@@ -18,13 +18,13 @@ def main():
             Random field positions
         """
         train_loader = DataLoader(
-            FRCDataset("/mnt/frc-rl/Data/train"),
+            FRCDataset("/mnt/frc-rl/Data/pretrain/train"),
             batch_size=config.BATCH_SIZE,
             shuffle=True,
             num_workers=2
         )
         valid_loader = DataLoader(
-            FRCDataset("/mnt/frc-rl/Data/valid"),
+            FRCDataset("/mnt/frc-rl/Data/pretrain/valid"),
             batch_size=config.BATCH_SIZE,
             shuffle=False,
             num_workers=1
@@ -39,13 +39,13 @@ def main():
             Random field positions
         """
         train_loader = DataLoader(
-            FRCDataset("/mnt/frc-rl/Data/train"),
+            FRCDataset("/mnt/frc-rl/Data/finetune/train"),
             batch_size=config.BATCH_SIZE,
             shuffle=True,
             num_workers=2
         )
         valid_loader = DataLoader(
-            FRCDataset("/mnt/frc-rl/Data/valid"),
+            FRCDataset("/mnt/frc-rl/Data/finetune/valid"),
             batch_size=config.BATCH_SIZE,
             shuffle=False,
             num_workers=1
@@ -60,7 +60,7 @@ def main():
                     cbs     = [SaveBestCallback("./exports/autosave"), StatusCallback()]
     )
 
-    learner.fit_one_cycle(config.EPOCHS, max_lr=3e-4)
+    learner.fit_one_cycle(config.TRAIN_EPOCHS, max_lr=3e-4)
     learner.save("./exports/pretrain")
 
     ############ FINE TUNE ############
@@ -69,7 +69,7 @@ def main():
                     cbs     = [SaveBestCallback("./exports/autosave"), StatusCallback()]
     )
 
-    learner.fit_one_cycle(config.EPOCHS, max_lr=1e-4)
+    learner.fit_one_cycle(config.TUNE_EPOCHS, max_lr=1e-4)
     learner.save("./exports/finetune")
 
 
