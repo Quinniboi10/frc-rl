@@ -63,14 +63,9 @@ class Episode:
 
 
 class FRCDataset(Dataset):
-    def __init__(self, root: Path|str):
-        if not isinstance(root, Path):
-            root = Path(root)
-        root = root.resolve(strict=True)
+    def __init__(self, files: list[Path]):
 
-        files: list[Path] = [file for file in root.rglob("*.txt") if file.is_file()]
-
-        self.datapoints: list[Datapoint] = []
+        datapoints: list[Datapoint] = []
 
         # Extract datapoints from all files as a list of Datapoint objects
         for file in files:
@@ -95,7 +90,7 @@ class FRCDataset(Dataset):
                             value = next(data)
                             setattr(obj, field.name, field_type(value))
 
-                self.datapoints.append(dp)
+                datapoints.append(dp)
 
                 extra_elems = 0
                 try:
@@ -119,10 +114,10 @@ class FRCDataset(Dataset):
         # Add a quick datapoint at the end just to clear the buffer out
         terminator = Datapoint()
         terminator.input_frame.step = 0
-        self.datapoints.append(terminator)
+        datapoints.append(terminator)
 
         # Extract episodes from each game
-        for dp in self.datapoints:
+        for dp in datapoints:
             if len(dp_buffer) > 0 and dp.input_frame.step <= dp_buffer[-1].input_frame.step:
                 if len(dp_buffer) > config.MIN_EPISODE_LENGTH:
                     for _ in range(len(dp_buffer)):
@@ -132,7 +127,7 @@ class FRCDataset(Dataset):
                 dp_buffer = []
             dp_buffer.append(dp)
 
-        print(f"Parsed {sum(file.stat().st_size / (1000 ** 2) for file in files):.2f} MB across {len(files)} file{"s" if len(files) > 1 else ""}, containing {len(self):,} usable datapoints with {len(self) / len(self.datapoints) * 100:.2f}% retention and {len(self.episodes)} episodes")
+        print(f"Parsed {sum(file.stat().st_size / (1000 ** 2) for file in files):.2f} MB across {len(files)} file{"s" if len(files) > 1 else ""}, containing {len(self):,} usable datapoints with {len(self) / len(datapoints) * 100:.2f}% retention and {len(self.episodes):,} episodes")
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         episode_idx = self.idx_to_ep[idx]
