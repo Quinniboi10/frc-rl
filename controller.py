@@ -299,7 +299,7 @@ class Controller:
         ############ Intercept/block ############
         # Solve target position by calculating center in field/robot-relative polar (hybrid) and converting back to euclidean
         opp_theta, opp_r = self._get_opponent_position_polar(self_angle, preds)
-        opp_pos = Vec2(opp_r * math.cos(opp_theta), -opp_r * math.sin(opp_theta)) + self_pos
+        opp_pos = Vec2(opp_r * math.cos(opp_theta), opp_r * math.sin(opp_theta)) + self_pos
 
         self.opp_pos_history.append(opp_pos)
 
