@@ -14,8 +14,6 @@ import config
 
 @dataclass
 class Frame:
-    step: int = field(init=False)
-
     vel_fwd: float = field(init=False)
     vel_right: float = field(init=False)
 
@@ -55,6 +53,7 @@ class Target:
 
 @dataclass
 class Datapoint:
+    step: int = field(init=False)
     input_frame: Frame
     target: Target
 
@@ -87,6 +86,8 @@ class FRCDataset(Dataset):
             for line in file.read_text().splitlines():
                 dp = Datapoint()
                 data = iter(line.split('|'))
+
+                dp.step = int(next(data))
 
                 for obj in (dp.input_frame, dp.target):
                     types = get_type_hints(obj)
@@ -128,12 +129,12 @@ class FRCDataset(Dataset):
 
         # Add a quick datapoint at the end just to clear the buffer out
         terminator = Datapoint()
-        terminator.input_frame.step = 0
+        terminator.step = 0
         datapoints.append(terminator)
 
         # Extract episodes from each game
         for dp in datapoints:
-            if len(dp_buffer) > 0 and dp.input_frame.step <= dp_buffer[-1].input_frame.step:
+            if len(dp_buffer) > 0 and dp.step <= dp_buffer[-1].step:
                 if len(dp_buffer) > config.MIN_EPISODE_LENGTH:
                     for _ in range(len(dp_buffer)):
                         self.idx_to_ep.append(len(self.episodes))
