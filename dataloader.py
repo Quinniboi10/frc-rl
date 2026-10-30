@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import torch
 from torch.utils.data import Dataset
 
@@ -25,6 +27,19 @@ class Frame:
     rot_cos: float = field(init=False)
 
     raycast_distances: list[float] = field(init=False)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> Frame:
+        frame = cls()
+
+        assert set(f.name for f in fields(cls)) == set(data.keys()), "Attempted to construct Frame with bad values"
+
+        exp_types = get_type_hints(frame)
+        for f in fields(cls):
+            exp_type = exp_types[f.name]
+            setattr(frame, f.name, exp_type(data[f.name]))
+
+        return frame
 
     def get_input_tensor(self) -> torch.Tensor:
         return torch.tensor([self.vel_fwd, self.vel_right, self.pos_x, self.pos_z, self.vel_angular, self.rot_sin, self.rot_cos] + self.raycast_distances, dtype=torch.float32)
