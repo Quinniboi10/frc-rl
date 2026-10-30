@@ -23,11 +23,12 @@ def update():
 
 @app.post("/reset/")
 def reset():
-    x = float(request.args["x"])
-    y = float(request.args["y"])
+    args = request.get_json()
+    x = float(args["x"])
+    y = float(args["y"])
     controller.reset(x, y)
 
-    return json.dumps(None), 204
+    return "", 204
 
 if __name__ == "__main__":
     port = int(sys.argv[1])
