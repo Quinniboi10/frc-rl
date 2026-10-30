@@ -138,15 +138,6 @@ class Solver:
         if horizon > 1:
             self.cost += 0.015 * cp.sum_squares(self.acc[:, 1:] - self.acc[:, :-1])
 
-        # Field limits for the placeholder
-        xmin, xmax, ymin, ymax = -13.4, -0.4, -7.5, -0.5
-        self.cost += 12.0 * (
-            cp.sum_squares(cp.pos(xmin - self.pos[0, :])) +
-            cp.sum_squares(cp.pos(self.pos[0, :] - xmax)) +
-            cp.sum_squares(cp.pos(ymin - self.pos[1, :])) +
-            cp.sum_squares(cp.pos(self.pos[1, :] - ymax))
-        )
-
         # Preserve your separate angular objective and effort penalty
         self.cost += 65.0 * cp.abs(self.angle[-1] - self.goal_angle) # We care a LOT about angle (especially when blocking so they can't pivot around us)
         self.cost += 5.0 * cp.abs(self.omega[-1]) # Just always try to have 0 rotational velocity at the end of a frame
@@ -372,6 +363,7 @@ class Controller:
     
     def _fov_for(self, ray: int) -> float:
         """ Return the radians from forward for the given ray by index """
+        # Rays are indexed from right to left so values should go from -fov to +fov
         normalized = 1 - 2 * ray / (config.EXPECTED_RAYS - 1)
         return math.radians(normalized * config.FOV_PER_SIDE)
 
@@ -386,7 +378,7 @@ class Controller:
         center_of_largest_hit = num_consecuitive_hits.index(largest_hit_size) - largest_hit_size // 2
         c1, c2 = center_of_largest_hit, center_of_largest_hit + (1 if largest_hit_size % 2 == 0 else 0) # c1 and c2 are the 2 closest raycasts to the center so we avg them
         
-        angle = (self._fov_for(c1) + self._fov_for(c2)) / 2 + self_angle
+        angle = self_angle - (self._fov_for(c1) + self._fov_for(c2)) / 2
         distance = (self.last_frame.raycast_distances[c1] + self.last_frame.raycast_distances[c2]) / 2 + config.EST_BUPER_TO_CENTER
 
         return angle, distance
