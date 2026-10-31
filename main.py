@@ -1,5 +1,7 @@
 import torch
 from torch.utils.data import DataLoader
+from sklearn.metrics import ConfusionMatrixDisplay
+import matplotlib.pyplot as plt
 
 from pathlib import Path
 import sqlite3
@@ -108,6 +110,27 @@ def main():
 
     learner.fit_one_cycle(config.TUNE_EPOCHS, max_lr=1e-4)
     learner.save("./exports/finetune")
+
+    # Confusion matrix for hit accuracy
+    with torch.no_grad():
+        model.eval()
+
+        cm = torch.zeros((2, 2), dtype=torch.long, device=learner.device) # [real][pred]
+
+        for x, y in learner.valid_dl:
+            x, y = x.to(learner.device), y.to(learner.device)
+
+            p = (model(x).sigmoid() > config.CONF_THRESHOLD).long()
+            y = y.long()
+
+            cm[0][0] += ((p == 0) & (y == 0)).sum().item()
+            cm[0][1] += ((p == 1) & (y == 0)).sum().item()
+            cm[1][0] += ((p == 0) & (y == 1)).sum().item()
+            cm[1][1] += ((p == 1) & (y == 1)).sum().item()
+
+        disp = ConfusionMatrixDisplay(cm.cpu().numpy(), display_labels=["Miss", "Hit"])
+        disp.plot(cmap="Blues", values_format=",d")
+        plt.show()
 
 
 if __name__ == "__main__":
