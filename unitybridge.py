@@ -1,4 +1,4 @@
-from controller import Controller, ControllerAction
+from controller import Controller
 from dataloader import Frame
 
 from flask import Flask, request

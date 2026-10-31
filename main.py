@@ -92,8 +92,8 @@ def main():
     optim = torch.optim.AdamW(model.parameters())
 
     ############ PRETRAIN ############
-    learner = Learner(model, optim, Pretrain.train_loader, Pretrain.valid_loader, loss_fn=FRCLoss(), clip_grads=1, autocast=False,
-                    metrics = [LRMetric(), TrainLossMetric(), ValidLossMetric(), CorrectHitMetric(), VelocityPredictionMetric()],
+    learner = Learner(model, optim, Pretrain.train_loader, Pretrain.valid_loader, loss_fn=nn.BCEWithLogitsLoss(), clip_grads=1, autocast=False,
+                    metrics = [LRMetric(), TrainLossMetric(), ValidLossMetric(), CorrectHitMetric()],
                     cbs     = [SaveBestCallback("./exports/autosave"), StatusCallback()]
     )
 
@@ -101,8 +101,8 @@ def main():
     learner.save("./exports/pretrain")
 
     ############ FINE TUNE ############
-    learner = Learner(model, optim, Finetune.train_loader, Finetune.valid_loader, loss_fn=FRCLoss(), clip_grads=1, autocast=False,
-                    metrics = [LRMetric(), TrainLossMetric(), ValidLossMetric(), CorrectHitMetric(), VelocityPredictionMetric()],
+    learner = Learner(model, optim, Finetune.train_loader, Finetune.valid_loader, loss_fn=nn.BCEWithLogitsLoss(), clip_grads=1, autocast=False,
+                    metrics = [LRMetric(), TrainLossMetric(), ValidLossMetric(), CorrectHitMetric()],
                     cbs     = [SaveBestCallback("./exports/autosave"), StatusCallback()]
     )
 

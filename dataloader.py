@@ -49,11 +49,6 @@ class Frame:
 @dataclass
 class Target:
     hits_target: list[bool] = field(init=False)
-    target_vel_fwd: float = field(init=False)
-    target_vel_right: float = field(init=False)
-
-    def get_target_tensor(self) -> torch.Tensor:
-        return torch.tensor(self.hits_target + [self.target_vel_fwd, self.target_vel_right], dtype=torch.float32)
 
 @dataclass
 class Datapoint:

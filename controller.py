@@ -294,7 +294,7 @@ class Controller:
 
         self.opp_pos_history.append(opp_pos)
 
-        opp_vel = self._estimate_opp_vel(self_angle, preds)
+        opp_vel = self._estimate_opp_vel()
 
         self_to_opp = opp_pos - self_pos
         angle_toward_opp = math.atan2(self_to_opp.y, self_to_opp.x)
@@ -337,12 +337,9 @@ class Controller:
         # If we get here, the solver failed to find a valid solution, so we just fall back to searching in hopes of finding a new target
         return build_search_action()
 
-    def _estimate_opp_vel(self, self_angle: float, preds: DefenseModelOutput) -> Vec2:
-        opp_relative_vel = Vec2(preds.relative_velocity_forward, preds.relative_velocity_right)
-        model_est = self._to_field_coords(Vec2.forward().dot(opp_relative_vel), Vec2.right().dot(opp_relative_vel), self_angle)  # This is now in the same absolute coordinate system as a frame x/y
-
+    def _estimate_opp_vel(self) -> Vec2:
         if self.opp_pos_history[-1] is None or self.opp_pos_history[-2] is None:
-            return model_est
+            return Vec2.zero()
 
         curr_pos = self.opp_pos_history[-1]
         last_pos = self.opp_pos_history[-2]

@@ -15,8 +15,6 @@ import config
 @dataclass
 class DefenseModelOutput():
     ray_hit_confidences: list[float] # Model output confidences post-sigmoid
-    relative_velocity_forward: float # Relative to the local robot, not the detected robot
-    relative_velocity_right: float # Relative to the local robot, not the detected robot
 
 class DefenseInferenceModel():
     def __init__(self, path: Path):
@@ -39,13 +37,13 @@ class DefenseInferenceModel():
 
         # Run inference
         out_tensor: torch.Tensor = self.model(in_tensor).squeeze(0) # Strip the batch dimension
-        out_tensor[:-2] = out_tensor[:-2].sigmoid()
+        out_tensor = out_tensor.sigmoid()
 
         if not torch.isfinite(out_tensor).all():
             raise RuntimeError("Got non-finite numbers!")
 
         # Build output format
-        return DefenseModelOutput(out_tensor[:-2].tolist(), out_tensor[-2].item(), out_tensor[-1].item())
+        return DefenseModelOutput(out_tensor.tolist())
 
 class DefenseInferenceStack():
     MAX_FRAME_DRIFT = 15 # ms
