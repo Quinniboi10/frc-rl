@@ -4,11 +4,15 @@ import torch
 from torch.utils.data import Dataset
 
 from pathlib import Path
+import time
 
-from typing import get_type_hints, get_origin, get_args
+from typing import get_type_hints, get_origin
 from dataclasses import dataclass, field, fields
 
 import config
+
+import numpy as np
+from numpy.typing import NDArray
 
 # Some variables are named in terms of Z because when training in Unity, Y represents up/down
 
@@ -75,83 +79,81 @@ class Episode:
         padding = max(0, config.FRAMES - idx)
         return [self.frames[0]] * padding + self.frames[start:idx]
 
+def process_data(data: list[NDArray[np.float32]], inputs: NDArray[np.float32], targets: NDArray[np.float32], step: NDArray[np.int32]) -> np.int64:
+    idx = np.int64(0)
+
+    size_inputs  = inputs.shape[1]
+    size_targets = targets.shape[1]
+
+    episodes = np.int64(0)
+
+    raw_step = np.zeros_like(step)
+
+    for file in data:
+        for line_idx in range(file.shape[0]):
+            line = file[line_idx]
+
+            curr_step = raw_step[idx] = line[0] 
+            if idx == 0 or curr_step <= raw_step[idx - 1]:
+                step[idx] = 0
+                episodes += 1
+            else:
+                step[idx] = step[idx - 1] + 1 # Ensure step is linear throughout the episode
+            
+            inputs[idx] = line[1:size_inputs+1]
+            targets[idx] = line[size_inputs+1:size_inputs+size_targets+1]
+            idx += 1
+
+    assert idx == inputs.shape[0], "Something went wrong while loading data; not all expected datapoints were processed"
+
+    return episodes
 
 class FRCDataset(Dataset):
     def __init__(self, files: list[Path]):
+        """
+        NDArray [index][inputs] - float32 -> input tensor
+        NDArray [index][target] - float32 -> target tensor
+        NDArray [index]         - int     -> steps (recomputed to count up by 1 OR go down to 0)
+        """
+        start = time.monotonic()
 
-        datapoints: list[Datapoint] = []
+        data = [np.loadtxt(file, delimiter='|', dtype=np.float32, ndmin=2) for file in files]
 
-        # Extract datapoints from all files as a list of Datapoint objects
-        for file in files:
-            for line in file.read_text().splitlines():
-                dp = Datapoint()
-                data = iter(line.split('|'))
+        self.num_datapoints = sum(file.shape[0] for file in data)
 
-                dp.step = int(next(data))
+        frame_types = get_type_hints(Frame)
+        target_types = get_type_hints(Target)
 
-                for obj in (dp.input_frame, dp.target):
-                    types = get_type_hints(obj)
-                    for field in fields(obj):
-                        field_type = types[field.name]
-                        if get_origin(field_type) == list:
-                            # These will need to consume more than 1 token and save them all as 1 list
-                            list_item_type = get_args(field_type)[0]
-                            if list_item_type == bool:
-                                value = [next(data) == "1" for _ in range(config.EXPECTED_RAYS)]
-                            else:
-                                value = [list_item_type(next(data)) for _ in range(config.EXPECTED_RAYS)]
-                            setattr(obj, field.name, value)
-                        else:
-                            # Only 1 token will be consumed here
-                            value = next(data)
-                            setattr(obj, field.name, field_type(value))
+        num_input_values = sum(config.EXPECTED_RAYS if get_origin(frame_types[field.name]) is list else 1 for field in fields(Frame))
+        num_target_values = sum(config.EXPECTED_RAYS if get_origin(target_types[field.name]) is list else 1 for field in fields(Target))
 
-                datapoints.append(dp)
+        self.inputs  = np.zeros((self.num_datapoints, num_input_values), dtype=np.float32)
+        self.targets = np.zeros((self.num_datapoints, num_target_values), dtype=np.float32)
+        self.step    = np.zeros(self.num_datapoints, dtype=np.int32)
 
-                extra_elems = 0
-                try:
-                    while True:
-                        next(data)
-                        extra_elems += 1
-                except StopIteration:
-                    if extra_elems != 0:
-                        raise RuntimeError(f"{file} failed to parse; found {extra_elems} extra values")
+        parsed_episodes = process_data(data, self.inputs, self.targets, self.step)
 
-        # All episodes
-        self.episodes: list[Episode] = []
-
-        # Index of datapoint -> index into episodes
-        # Note that the index != self.datapoint index, because some episodes will be skipped
-        self.idx_to_ep: list[int] = []
-        self.idx_to_step: list[int] = []
-
-        dp_buffer: list[Datapoint] = []
-
-        # Add a quick datapoint at the end just to clear the buffer out
-        terminator = Datapoint()
-        terminator.step = 0
-        datapoints.append(terminator)
-
-        # Extract episodes from each game
-        for dp in datapoints:
-            if len(dp_buffer) > 0 and dp.step <= dp_buffer[-1].step:
-                if len(dp_buffer) > config.MIN_EPISODE_LENGTH:
-                    for _ in range(len(dp_buffer)):
-                        self.idx_to_ep.append(len(self.episodes))
-                    self.idx_to_step.extend(range(len(dp_buffer)))
-                    self.episodes.append(Episode(dp_buffer))
-                dp_buffer = []
-            dp_buffer.append(dp)
-
-        print(f"Parsed {sum(file.stat().st_size / (1000 ** 2) for file in files):.2f} MB across {len(files)} file{"s" if len(files) > 1 else ""}, containing {len(self):,} usable datapoints with {len(self) / len(datapoints) * 100:.2f}% retention and {len(self.episodes):,} episodes")
+        total_mb = sum(file.stat().st_size / (1000 ** 2) for file in files)
+        print(f"Parsed {total_mb:,.2f} MB across {len(files):,} file{"s" if len(files) > 1 else ""}, containing {self.num_datapoints:,} usable datapoints across {parsed_episodes:,} episodes ({total_mb / (time.monotonic() - start):,.2f}MB/s)")
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
-        episode_idx = self.idx_to_ep[idx]
-        datapoints = self.episodes[episode_idx][self.idx_to_step[idx]]
+        step = self.step[idx]
+        padding = max(0, config.FRAMES - step - 1)
 
-        assert len(datapoints) == config.FRAMES, f"{idx} has a length of {len(datapoints)}"
+        if padding:
+            first_frame = np.expand_dims(self.inputs[idx - step], axis=0) # Add a leading 1 to reshape to (1, N) so concat works
+            input_pad = np.repeat(first_frame, padding, axis=0)
 
-        return torch.concat([dp.input_frame.get_input_tensor() for dp in datapoints]), datapoints[-1].target.get_target_tensor()
+            unpadded = config.FRAMES - padding
+            input_no_pad = self.inputs[idx+1-unpadded:idx+1]
+
+            full_input = np.concatenate((input_pad, input_no_pad))
+        else:
+            full_input = self.inputs[idx-config.FRAMES+1:idx+1]
+
+        target = self.targets[idx]
+
+        return torch.from_numpy(full_input), torch.from_numpy(target)
 
     def __len__(self):
-        return len(self.idx_to_ep)
+        return self.num_datapoints

@@ -7,8 +7,6 @@ FRAME_SIZE = 72
 
 FOV_PER_SIDE = 47.5 # Degrees the raycasts go in both left and right. Equal to FOV / 2
 
-MIN_EPISODE_LENGTH = 20
-
 BATCH_SIZE = 128
 TRAIN_EPOCHS = 15
 TUNE_EPOCHS = 10
