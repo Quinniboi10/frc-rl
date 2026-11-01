@@ -26,7 +26,7 @@ class DefenseInferenceModel():
 
     @torch.inference_mode()
     def __call__(self, frames: list[Frame]) -> DefenseModelOutput:
-        # Get 10 frames ready
+        # Get N frames ready
         frames = frames[-config.FRAMES:]
         if len(frames) < config.FRAMES:
             frames = [frames[0]] * (config.FRAMES - len(frames)) + frames

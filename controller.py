@@ -216,17 +216,18 @@ class Controller:
         horizon = round(config.SEARCH_LOOKAHEAD * 1000 / config.TIMESTEP)
         logging.info(f"Using {horizon} frame solver search length")
         self.solver = Solver(horizon, constraints)
-        self.initial_pos = None
-        self.opp_pos_history: deque[None|Vec2] = deque([None] * 10, maxlen=10)
+        self.hold_pos = None
+        self.opp_pos_history: deque[None|Vec2] = deque([None] * config.FRAMES, maxlen=config.FRAMES)
 
         self.last_act = ControllerAction.idle()
         self.repeated_ticks = 0
 
-    def reset(self, self_x: float, self_y: float):
+    def reset(self, search_x: float, search_y: float):
+        """ Resets the controller and programs the solver to drive to (x, y) when searching for opponents """
         self.defense_inference_stack.reset()
         self.solver.previous_acc.value = np.zeros(2)
-        self.initial_pos = Vec2(self_x, self_y)
-        for _ in range(10):
+        self.hold_pos = Vec2(search_x, search_y)
+        for _ in range(config.FRAMES):
             self.opp_pos_history.append(None)
 
         self.last_act = ControllerAction.idle()
@@ -266,17 +267,17 @@ class Controller:
         self_angle = math.atan2(self.last_frame.rot_sin, self.last_frame.rot_cos)
         self_omega = frame.vel_angular
 
-        assert self.initial_pos is not None, "Didn't call reset() before update() in Controller"
+        assert self.hold_pos is not None, "Didn't call reset() before update() in Controller"
 
         ############  None (search)  ############
         self_pos = Vec2(self.last_frame.pos_x, self.last_frame.pos_y)
         self_vel = self._to_field_coords(self.last_frame.vel_fwd, self.last_frame.vel_right, self_angle)
 
         def build_search_action() -> ControllerAction:
-            assert self.initial_pos is not None # It can't be by here, but pyright doesn't know that
+            assert self.hold_pos is not None # It can't be by here, but pyright doesn't know that
             solution = self.solver(
                 self_pos, self_vel, self_angle, self_omega,
-                self.initial_pos, Vec2.zero(), self._get_search_rot()
+                self.hold_pos, Vec2.zero(), self._get_search_rot()
             )
             if solution is not None:
                 accel, rot_accel = solution
@@ -326,7 +327,7 @@ class Controller:
         # Note that here we only try to match Y values (get in the way)
         solution = self.solver(
             self_pos, self_vel, self_angle, self_omega,
-            Vec2(self.initial_pos.x, target_pos.y), Vec2.zero(), (angle_toward_opp + self._get_intercept_rot()) / 2
+            Vec2(self.hold_pos.x, target_pos.y), Vec2.zero(), (angle_toward_opp + self._get_intercept_rot()) / 2
         )
 
         # If the solution exists, return
