@@ -3,3 +3,5 @@ __pycache__/
 .vscode/
 experiments/
 exports/
+
+rust_test/target/

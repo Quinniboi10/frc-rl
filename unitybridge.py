@@ -37,4 +37,4 @@ def reset(request_id: int):
 
 if __name__ == "__main__":
     port = int(sys.argv[1])
-    app.run(port=port, threaded=True, debug=False)
+    app.run(port=port, threaded=False, debug=False)

@@ -269,7 +269,7 @@ class Controller:
         assert self.initial_pos is not None, "Didn't call reset() before update() in Controller"
 
         ############  None (search)  ############
-        self_pos = Vec2(self.last_frame.pos_x, self.last_frame.pos_z)
+        self_pos = Vec2(self.last_frame.pos_x, self.last_frame.pos_y)
         self_vel = self._to_field_coords(self.last_frame.vel_fwd, self.last_frame.vel_right, self_angle)
 
         def build_search_action() -> ControllerAction:

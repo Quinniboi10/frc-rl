@@ -22,7 +22,7 @@ class Frame:
     vel_right: float = field(init=False)
 
     pos_x: float = field(init=False)
-    pos_z: float = field(init=False)
+    pos_y: float = field(init=False)
 
     vel_angular: float = field(init=False)
     rot_sin: float = field(init=False)
@@ -44,7 +44,7 @@ class Frame:
         return frame
 
     def get_input_tensor(self) -> torch.Tensor:
-        return torch.tensor([self.vel_fwd, self.vel_right, self.pos_x, self.pos_z, self.vel_angular, self.rot_sin, self.rot_cos] + self.raycast_distances, dtype=torch.float32)
+        return torch.tensor([self.vel_fwd, self.vel_right, self.pos_x, self.pos_y, self.vel_angular, self.rot_sin, self.rot_cos] + self.raycast_distances, dtype=torch.float32)
 
 @dataclass
 class Target:
