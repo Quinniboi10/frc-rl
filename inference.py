@@ -23,7 +23,6 @@ class DefenseInferenceModel():
             torch.load(path, weights_only=True, map_location="cpu")
         )
         self.model.eval()
-        self.model = torch.compile(self.model)
 
     @torch.inference_mode()
     def __call__(self, frames: list[Frame]) -> DefenseModelOutput:
