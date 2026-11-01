@@ -14,6 +14,8 @@ from eagle.callback import *
 
 import config
 
+import code
+
 """
 Training data should be organized in the .../<phase>/<train/valid>/.../*.txt format
 The 'train' or 'valid' folder name must appear exactly once per tree
@@ -26,6 +28,8 @@ def main():
         Path("/mnt/frc-rl/Data/pretrain-bootstrap-mixed-field/valid"),
         Path("/mnt/frc-rl/Data/finetune/train"),
         Path("/mnt/frc-rl/Data/finetune/valid"),
+        Path("/mnt/frc-rl/Data/2026-field/train"),
+        Path("/mnt/frc-rl/Data/2026-field/valid"),
     ]
 
     SQL_PRETRAIN_TRAIN = "SELECT file FROM files WHERE phase GLOB 'pretrain*' AND split = 'train'"
@@ -94,31 +98,31 @@ def main():
     optim = torch.optim.AdamW(model.parameters())
 
     ############ PRETRAIN ############
-    learner = Learner(model, optim, Pretrain.train_loader, Pretrain.valid_loader, loss_fn=nn.BCEWithLogitsLoss(), clip_grads=1, autocast=False,
+    pre_learner = Learner(model, optim, Pretrain.train_loader, Pretrain.valid_loader, loss_fn=nn.BCEWithLogitsLoss(), clip_grads=1, autocast=False,
                     metrics = [LRMetric(), TrainLossMetric(), ValidLossMetric(), CorrectHitMetric()],
                     cbs     = [SaveBestCallback("./exports/autosave"), StatusCallback()]
     )
 
-    learner.fit_one_cycle(config.TRAIN_EPOCHS, max_lr=3e-4)
-    learner.save("./exports/pretrain")
+    pre_learner.fit_one_cycle(config.TRAIN_EPOCHS, max_lr=3e-4)
+    pre_learner.save("./exports/pretrain")
 
     ############ FINE TUNE ############
-    learner = Learner(model, optim, Finetune.train_loader, Finetune.valid_loader, loss_fn=nn.BCEWithLogitsLoss(), clip_grads=1, autocast=False,
+    fine_learner = Learner(model, optim, Finetune.train_loader, Finetune.valid_loader, loss_fn=nn.BCEWithLogitsLoss(), clip_grads=1, autocast=False,
                     metrics = [LRMetric(), TrainLossMetric(), ValidLossMetric(), CorrectHitMetric()],
                     cbs     = [SaveBestCallback("./exports/autosave"), StatusCallback()]
     )
 
-    learner.fit_one_cycle(config.TUNE_EPOCHS, max_lr=1e-4)
-    learner.save("./exports/finetune")
+    fine_learner.fit_one_cycle(config.TUNE_EPOCHS, max_lr=1e-4)
+    fine_learner.save("./exports/finetune")
 
     # Confusion matrix for hit accuracy
     with torch.no_grad():
         model.eval()
 
-        cm = torch.zeros((2, 2), dtype=torch.long, device=learner.device) # [real][pred]
+        cm = torch.zeros((2, 2), dtype=torch.long, device=fine_learner.device) # [real][pred]
 
-        for x, y in learner.valid_dl:
-            x, y = x.to(learner.device), y.to(learner.device)
+        for x, y in fine_learner.valid_dl:
+            x, y = x.to(fine_learner.device), y.to(fine_learner.device)
 
             p = (model(x).sigmoid() > config.CONF_THRESHOLD).long()
             y = y.long()
@@ -132,6 +136,9 @@ def main():
         disp.plot(cmap="Blues", values_format=",d")
         plt.show()
 
+    print("Entering REPL")
+    while True:
+        code.interact(local=locals())
 
 if __name__ == "__main__":
     main()
