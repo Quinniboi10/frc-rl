@@ -137,8 +137,7 @@ def main():
         plt.show()
 
     print("Entering REPL")
-    while True:
-        code.interact(local=locals())
+    code.interact(local=locals())
 
 if __name__ == "__main__":
     main()
