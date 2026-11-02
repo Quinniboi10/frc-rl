@@ -16,7 +16,7 @@ fn random() -> f32 {
 
 fn post(client: &Client, endpoint: &str, body: &Value) {
     client.post(format!("http://127.0.0.1:{}{}", PORT, endpoint))
-    .header("Content-Type", "Application/json").json(&body).send().ok().unwrap();
+    .header("Content-Type", "Application/json").json(&body).send().unwrap();
 }
 
 fn reset(client: &Client, id: i32) {
@@ -52,7 +52,7 @@ fn update(client: &Client, id: i32) -> u128 {
     return (time::Instant::now() - start).as_millis();
 }
 
-fn simulate_client(id: i32) -> f64 {
+fn simulate_client(id: i32) -> Vec<f64> {
     let client = Client::new();
 
     reset(&client, id);
@@ -60,15 +60,15 @@ fn simulate_client(id: i32) -> f64 {
     let mut next_frame = time::Instant::now();
     let frame_time = time::Duration::from_millis(100); // 10hz
 
-    let mut total_ms = 0u128;
+    let mut times: Vec<f64> = Vec::new();
 
     for _ in 0..REQUESTS_PER_THREAD {
-        total_ms += update(&client, id);
+        times.push(update(&client, id) as f64);
         next_frame += frame_time;
         thread::sleep(next_frame.saturating_duration_since(time::Instant::now()));
     }
 
-    return total_ms as f64 / REQUESTS_PER_THREAD as f64;
+    return times;
 }
 
 fn main() {
@@ -79,10 +79,25 @@ fn main() {
 
         let handles: Vec<_> = (0..n_threads).map(|id| thread::spawn(move || simulate_client(id as i32))).collect();
 
-        let avg_time = handles.into_iter().map(|handle| handle.join().unwrap()).sum::<f64>() / n_threads as f64;
-        println!("Average response time for {} r/s: {:2}ms", req_per_s, avg_time);
+        let mut times: Vec<f64> = handles.into_iter().map(|handle| handle.join().unwrap()).flatten().collect();
 
-        if avg_time > MAX_MS as f64 {
+        let n_times = times.len();
+
+        times.sort_by(f64::total_cmp);
+
+        let mean: f64 = times.iter().sum::<f64>() / n_times as f64;
+        let median: f64 = (times[(n_times as f64 * 0.5).floor() as usize] + times[(n_times as f64 * 0.5).ceil() as usize]) / 2 as f64;
+        let p95: f64 = times[(n_times as f64 * 0.95).ceil() as usize];
+        let p99: f64 = times[(n_times as f64 * 0.99).ceil() as usize];
+
+        println!("{} requests per second", req_per_s);
+        println!("    {} mean", mean);
+        println!("    {} median", median);
+        println!("    {} 95%", p95);
+        println!("    {} 99%", p99);
+        println!("    {} max", times[n_times - 1]);
+
+        if p95 > MAX_MS as f64 {
             break;
         }
 
