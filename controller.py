@@ -19,6 +19,8 @@ from inference import DefenseInferenceStack, DefenseModelOutput
 from dataloader import Frame
 import config
 
+from eagle.helper import ExpMovingAvg
+
 @dataclass
 class Vec2:
     x: float
@@ -60,6 +62,18 @@ class Vec2:
 
     def dot(self, other: Vec2):
         return math.sumprod(self, other)
+
+class VecEMA():
+    def __init__(self, k):
+        self.x = ExpMovingAvg(k)
+        self.y = ExpMovingAvg(k)
+
+    def step(self, pos: Vec2):
+        self.x.step(pos.x)
+        self.y.step(pos.y)
+
+    def get(self) -> Vec2:
+        return Vec2(self.x.get(), self.y.get())
 
 class ControllerState(Enum):
     SEARCHING = auto()
@@ -219,6 +233,8 @@ class Controller:
         self.hold_pos = None
         self.opp_pos_history: deque[None|Vec2] = deque([None] * config.FRAMES, maxlen=config.FRAMES)
 
+        self.opp_vel_est = VecEMA(config.OPP_VEL_EMA_K)
+
         self.last_act = ControllerAction.idle()
         self.repeated_ticks = 0
 
@@ -229,6 +245,8 @@ class Controller:
         self.hold_pos = Vec2(search_x, search_y)
         for _ in range(config.FRAMES):
             self.opp_pos_history.append(None)
+        
+        self.opp_vel_est = VecEMA(config.OPP_VEL_EMA_K)
 
         self.last_act = ControllerAction.idle()
         self.repeated_ticks = 0
@@ -294,8 +312,9 @@ class Controller:
         opp_pos = Vec2(opp_r * math.cos(opp_theta), opp_r * math.sin(opp_theta)) + self_pos
 
         self.opp_pos_history.append(opp_pos)
+        self.opp_vel_est.step(self._estimate_opp_vel())
 
-        opp_vel = self._estimate_opp_vel()
+        opp_vel = self.opp_vel_est.get()
 
         self_to_opp = opp_pos - self_pos
         angle_toward_opp = math.atan2(self_to_opp.y, self_to_opp.x)
