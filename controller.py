@@ -344,9 +344,10 @@ class Controller:
         target_pos = opp_pos + opp_vel * expected_time_of_intercept
 
         # Note that here we only try to match Y values (get in the way)
+        base = self._get_intercept_rot()
         solution = self.solver(
             self_pos, self_vel, self_angle, self_omega,
-            Vec2(self.hold_pos.x, target_pos.y), Vec2.zero(), (angle_toward_opp + self._get_intercept_rot()) / 2
+            Vec2(self.hold_pos.x, target_pos.y), Vec2(0.0, opp_vel.y / 2.0), base + 0.5 * math.remainder(angle_toward_opp - base, 2 * math.pi)
         )
 
         # If the solution exists, return
