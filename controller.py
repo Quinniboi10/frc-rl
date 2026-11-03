@@ -212,7 +212,7 @@ class Controller:
     def __init__(self, model_path: Path, constraints: RobotConstraints=RobotConstraints()):
         self.constraints = constraints
         self.defense_inference_stack = DefenseInferenceStack(model_path)
-        self.objective = ControllerObjective.STOP_POSITIVE_X
+        self.objective = ControllerObjective.STOP_NEGATIVE_X
         horizon = round(config.SEARCH_LOOKAHEAD * 1000 / config.TIMESTEP)
         logging.info(f"Using {horizon} frame solver search length")
         self.solver = Solver(horizon, constraints)
