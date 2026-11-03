@@ -146,7 +146,7 @@ class Solver:
         # Squaring the scale 6 gives a lateral weight of 36
         axis_scale = np.array([1.0, 6.0])
         self.cost = 80.0 * cp.sum_squares(cp.multiply(axis_scale, self.pos[:, -1] - self.goal_pos))
-        self.cost += 2.0 * cp.sum_squares(cp.multiply(axis_scale, self.vel[:, -1] - self.goal_vel))
+        self.cost += 8.0 * cp.sum_squares(cp.multiply(axis_scale, self.vel[:, -1] - self.goal_vel))
         self.cost += 0.00025 * cp.sum_squares(self.acc)
         self.cost += 0.00015 * cp.sum_squares(self.acc[:, 0] - self.previous_acc)
         if horizon > 1:
