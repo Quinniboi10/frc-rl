@@ -143,8 +143,8 @@ class Solver:
 
         ############ CONSTRAINTS AND COST ############
 
-        # Squaring the scale 8 gives a lateral weight of 64
-        axis_scale = np.array([1.0, 8.0])
+        # Squaring the scale 6 gives a lateral weight of 36
+        axis_scale = np.array([1.0, 6.0])
         self.cost = 80.0 * cp.sum_squares(cp.multiply(axis_scale, self.pos[:, -1] - self.goal_pos))
         self.cost += 2.0 * cp.sum_squares(cp.multiply(axis_scale, self.vel[:, -1] - self.goal_vel))
         self.cost += 0.00025 * cp.sum_squares(self.acc)
