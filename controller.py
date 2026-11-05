@@ -97,8 +97,8 @@ class ControllerObjective(Enum):
 @dataclass
 # Units are m and rad
 class RobotConstraints:
-    MAX_SPEED = 5.25
-    MAX_ACCEL = 5.25
+    MAX_SPEED = 5.95
+    MAX_ACCEL = 5.95
     MAX_ANGULAR_ACCEL = 20.0
     MAX_ANGULAR_SPEED = 5.5
 
